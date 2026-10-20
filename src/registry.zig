@@ -2,6 +2,7 @@
 //! the web editor reads the same table through `omnitt-statusline registry`.
 
 const std = @import("std");
+const codex = @import("codex.zig");
 
 pub const Kind = enum {
     /// String fact, optionally transformed.
@@ -277,6 +278,8 @@ pub fn writeJson(w: *std.Io.Writer) !void {
         try s.endObject();
     }
     try s.endArray();
+    try s.objectField("codex");
+    try codex.writeJson(&s);
     try s.endObject();
 }
 
