@@ -1,0 +1,62 @@
+name: release
+
+# Tag vX.Y.Z → build all platforms from this commit, fill install.sh with the version and
+# checksums, attest every file, publish a GitHub Release. Nothing is built anywhere else.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Tag must match the version in the source
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          grep -q "pub const version = \"$v\";" src/main.zig
+          grep -q "\.version = \"$v\"," build.zig.zon
+
+      - run: zig build test
+
+      - name: Build
+        run: |
+          mkdir dist
+          for t in aarch64-macos:darwin-arm64 x86_64-macos:darwin-x64 aarch64-linux-musl:linux-arm64 x86_64-linux-musl:linux-x64; do
+            zig build -Dtarget=${t%%:*} -Doptimize=ReleaseFast --prefix "out/${t##*:}"
+            cp "out/${t##*:}/bin/omnitt-statusline" "dist/omnitt-statusline-${t##*:}"
+          done
+          zig build wasm --prefix out
+          cp out/wasm/render.wasm dist/
+          dist/omnitt-statusline-linux-x64 registry > dist/registry.json
+
+      - name: Fill install.sh
+        run: |
+          sed "s/@VERSION@/${GITHUB_REF_NAME#v}/" install.sh > dist/install.sh
+          for p in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            sum=$(sha256sum "dist/omnitt-statusline-$p" | cut -d' ' -f1)
+            sed -i "s/@SHA256_${p/-/_}@/$sum/" dist/install.sh
+          done
+          if grep -q '=@' dist/install.sh; then echo "unfilled placeholder" >&2; exit 1; fi
+          sh -n dist/install.sh
+
+      - run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes "Verify any file: \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`. Checksums: SHA256SUMS."
