@@ -1,6 +1,6 @@
 .{
     .name = .omnitt_statusline,
-    .version = "1.1.0",
+    .version = "1.2.0",
     .fingerprint = 0xd69867e4ac4110a8,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{},

@@ -23,7 +23,7 @@ const codex = @import("codex.zig");
 const Facts = @import("facts.zig").Facts;
 const Allocator = std.mem.Allocator;
 
-pub const version = "1.1.0";
+pub const version = "1.2.0";
 const editor_url = "https://omnitt.com/statusline";
 
 var A: Allocator = undefined;
