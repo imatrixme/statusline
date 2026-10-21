@@ -29,9 +29,11 @@ pub const Kind = enum {
     clock,
     /// Pull request number with review state and an OSC 8 link.
     pr,
+    /// Byte count in binary units ("1.2G"); with `total`, "9.1G/16G".
+    bytes,
 };
 
-pub const Source = enum { session, transcript, git, system, custom };
+pub const Source = enum { session, transcript, git, project, cloud, system, disk, custom };
 
 pub const Unit = enum { none, ms, s };
 
@@ -58,7 +60,11 @@ pub const groups = [_]Group{
     .{ .id = "workspace", .name = "Workspace", .name_zh = "工作区" },
     .{ .id = "turn", .name = "Turn (transcript)", .name_zh = "轮次（transcript）" },
     .{ .id = "git", .name = "Git", .name_zh = "Git" },
+    .{ .id = "lang", .name = "Languages & runtimes", .name_zh = "语言与运行时" },
+    .{ .id = "project", .name = "Package", .name_zh = "项目包" },
+    .{ .id = "cloud", .name = "Cloud & environment", .name_zh = "云与环境" },
     .{ .id = "system", .name = "System", .name_zh = "系统" },
+    .{ .id = "disk", .name = "Disk usage", .name_zh = "磁盘占用" },
     .{ .id = "custom", .name = "Custom", .name_zh = "自定义" },
 };
 
@@ -124,6 +130,42 @@ const HOURGLASS = "\u{F051F}";
 const WRENCH = "\u{F05B7}";
 const GAUGE = "\u{F029A}";
 const TEXT = "\u{F09A8}";
+// Devicons / Seti / Material Design, names as in Nerd Fonts glyphnames.json
+const NODE = "\u{E718}"; // dev-nodejs_small
+const BUN = "\u{E76F}"; // dev-bun
+const DENO = "\u{E7C0}"; // dev-denojs
+const PYTHON = "\u{E73C}"; // dev-python
+const VENV = "\u{F0320}"; // md-language_python
+const GO = "\u{E627}"; // seti-go
+const RUST = "\u{E7A8}"; // dev-rust
+const JAVA = "\u{E738}"; // dev-java
+const RUBY = "\u{E739}"; // dev-ruby
+const PHP = "\u{E73D}"; // dev-php
+const SWIFT = "\u{E755}"; // dev-swift
+const ZIG = "\u{E6A9}"; // seti-zig
+const DOTNET = "\u{E77F}"; // dev-dotnet
+const PACKAGE = "\u{F03D3}"; // md-package
+const PACKAGE_VARIANT = "\u{F03D6}"; // md-package_variant
+const TAG_TEXT = "\u{F1224}"; // md-tag_text
+const K8S = "\u{F10FE}"; // md-kubernetes
+const DOCKER = "\u{F0868}"; // md-docker
+const AWS = "\u{F0E0F}"; // md-aws
+const GCLOUD = "\u{F11F6}"; // md-google_cloud
+const TERRAFORM = "\u{F1062}"; // md-terraform
+const NIX = "\u{F1105}"; // md-nix
+const SSH = "\u{F08C0}"; // md-ssh
+const CUBE = "\u{F01A7}"; // md-cube_outline
+const CONFLICT = "\u{F0029}"; // md-alert_octagon
+const MERGE = "\u{F062D}"; // md-source_merge
+const UPSTREAM = "\u{F14CE}"; // md-source_branch_sync
+const CPU = "\u{F0EE0}"; // md-cpu_64_bit
+const MEMORY = "\u{F035B}"; // md-memory
+const SWAP = "\u{F04E1}"; // md-swap_horizontal
+const HARDDISK = "\u{F02CA}"; // md-harddisk
+const FAN = "\u{F0210}"; // md-fan
+const UPTIME = "\u{F0150}"; // md-clock_outline
+const FOLDER_SIZE = "\u{F0256}"; // md-folder_outline
+const WORKTREES = "\u{F062C}"; // md-source_branch
 
 const ctx_rules = &[_][2]f64{ .{ 0, 78 }, .{ 50, 220 }, .{ 80, 203 } };
 const limit_rules = &[_][2]f64{ .{ 0, 78 }, .{ 70, 220 }, .{ 90, 203 } };
@@ -217,6 +259,43 @@ pub const defs = [_]Def{
     .{ .id = "git-diff-del", .group = "git", .source = .git, .kind = .number, .fact = "git.diff_del", .fmt = "raw", .icon = MINUS, .color = 203, .name = "Diff removed", .name_zh = "改动删除行" },
     .{ .id = "git-last-commit", .group = "git", .source = .git, .kind = .ago, .fact = "git.last_commit", .icon = CLOCK, .color = 244, .name = "Last commit", .name_zh = "上次提交距今" },
     .{ .id = "git-tag", .group = "git", .source = .git, .kind = .text, .fact = "git.tag", .icon = TAG, .color = 180, .name = "Nearest tag", .name_zh = "最近标签" },
+    .{ .id = "git-upstream", .group = "git", .source = .git, .kind = .text, .fact = "git.upstream", .icon = UPSTREAM, .color = 110, .name = "Upstream", .name_zh = "上游分支" },
+    .{ .id = "git-conflicts", .group = "git", .source = .git, .kind = .number, .fact = "git.conflicts", .fmt = "raw", .icon = CONFLICT, .color = 196, .name = "Conflicts", .name_zh = "冲突文件" },
+    .{ .id = "git-worktrees", .group = "git", .source = .git, .kind = .number, .fact = "git.worktrees", .fmt = "raw", .icon = WORKTREES, .color = 150, .name = "Worktrees", .name_zh = "worktree 数" },
+    .{ .id = "git-state", .group = "git", .source = .git, .kind = .text, .fact = "git.state", .icon = MERGE, .color = 209, .name = "Operation in progress", .name_zh = "进行中的操作" },
+
+    // languages: shown when the directory (or a parent up to the repository root) has the
+    // language's marker files; the version is the runtime on PATH, as the tools would run it
+    .{ .id = "node", .group = "lang", .source = .project, .kind = .text, .fact = "lang.node", .icon = NODE, .color = 113, .name = "Node.js", .name_zh = "Node.js" },
+    .{ .id = "bun", .group = "lang", .source = .project, .kind = .text, .fact = "lang.bun", .icon = BUN, .color = 223, .name = "Bun", .name_zh = "Bun" },
+    .{ .id = "deno", .group = "lang", .source = .project, .kind = .text, .fact = "lang.deno", .icon = DENO, .color = 79, .name = "Deno", .name_zh = "Deno" },
+    .{ .id = "python", .group = "lang", .source = .project, .kind = .text, .fact = "lang.python", .icon = PYTHON, .color = 221, .name = "Python", .name_zh = "Python" },
+    .{ .id = "python-venv", .group = "lang", .source = .project, .kind = .text, .fact = "lang.venv", .icon = VENV, .color = 221, .name = "Python env", .name_zh = "Python 虚拟环境" },
+    .{ .id = "go", .group = "lang", .source = .project, .kind = .text, .fact = "lang.go", .icon = GO, .color = 81, .name = "Go", .name_zh = "Go" },
+    .{ .id = "rust", .group = "lang", .source = .project, .kind = .text, .fact = "lang.rust", .icon = RUST, .color = 209, .name = "Rust", .name_zh = "Rust" },
+    .{ .id = "java", .group = "lang", .source = .project, .kind = .text, .fact = "lang.java", .icon = JAVA, .color = 167, .name = "Java", .name_zh = "Java" },
+    .{ .id = "ruby", .group = "lang", .source = .project, .kind = .text, .fact = "lang.ruby", .icon = RUBY, .color = 160, .name = "Ruby", .name_zh = "Ruby" },
+    .{ .id = "php", .group = "lang", .source = .project, .kind = .text, .fact = "lang.php", .icon = PHP, .color = 104, .name = "PHP", .name_zh = "PHP" },
+    .{ .id = "swift", .group = "lang", .source = .project, .kind = .text, .fact = "lang.swift", .icon = SWIFT, .color = 208, .name = "Swift", .name_zh = "Swift" },
+    .{ .id = "zig", .group = "lang", .source = .project, .kind = .text, .fact = "lang.zig", .icon = ZIG, .color = 214, .name = "Zig", .name_zh = "Zig" },
+    .{ .id = "dotnet", .group = "lang", .source = .project, .kind = .text, .fact = "lang.dotnet", .icon = DOTNET, .color = 99, .name = ".NET SDK", .name_zh = ".NET SDK" },
+
+    // package
+    .{ .id = "pkg-name", .group = "project", .source = .project, .kind = .text, .fact = "proj.name", .icon = PACKAGE, .color = 252, .name = "Package name", .name_zh = "包名" },
+    .{ .id = "pkg-version", .group = "project", .source = .project, .kind = .text, .fact = "proj.version", .icon = TAG_TEXT, .color = 180, .name = "Package version", .name_zh = "包版本" },
+    .{ .id = "pkg-manager", .group = "project", .source = .project, .kind = .text, .fact = "proj.pm", .icon = PACKAGE_VARIANT, .color = 146, .name = "Package manager", .name_zh = "包管理器" },
+
+    // cloud & environment: the context a CLI would act on, read from env vars and config files
+    .{ .id = "k8s-context", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.k8s_context", .icon = K8S, .color = 69, .name = "Kubernetes context", .name_zh = "Kubernetes context" },
+    .{ .id = "k8s-namespace", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.k8s_namespace", .icon = K8S, .color = 111, .name = "Kubernetes namespace", .name_zh = "Kubernetes 命名空间" },
+    .{ .id = "docker-context", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.docker_context", .icon = DOCKER, .color = 39, .name = "Docker context", .name_zh = "Docker context" },
+    .{ .id = "aws-profile", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.aws_profile", .icon = AWS, .color = 214, .name = "AWS profile", .name_zh = "AWS profile" },
+    .{ .id = "aws-region", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.aws_region", .icon = AWS, .color = 180, .name = "AWS region", .name_zh = "AWS 区域" },
+    .{ .id = "gcloud-project", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.gcloud_project", .icon = GCLOUD, .color = 75, .name = "Google Cloud project", .name_zh = "Google Cloud 项目" },
+    .{ .id = "terraform", .group = "cloud", .source = .cloud, .kind = .text, .fact = "cloud.terraform", .icon = TERRAFORM, .color = 99, .name = "Terraform workspace", .name_zh = "Terraform workspace" },
+    .{ .id = "nix-shell", .group = "cloud", .source = .cloud, .kind = .flag, .fact = "cloud.nix", .on = "nix", .icon = NIX, .color = 110, .name = "Nix shell", .name_zh = "Nix shell" },
+    .{ .id = "ssh", .group = "cloud", .source = .cloud, .kind = .flag, .fact = "cloud.ssh", .on = "ssh", .icon = SSH, .color = 209, .name = "SSH session", .name_zh = "SSH 会话" },
+    .{ .id = "container", .group = "cloud", .source = .cloud, .kind = .flag, .fact = "cloud.container", .on = "container", .icon = CUBE, .color = 39, .name = "In a container", .name_zh = "容器内" },
 
     // system
     .{ .id = "clock", .group = "system", .source = .system, .kind = .clock, .fmt = "%H:%M", .icon = CLOCK, .color = 252, .name = "Clock", .name_zh = "时钟" },
@@ -225,7 +304,26 @@ pub const defs = [_]Def{
     .{ .id = "user", .group = "system", .source = .system, .kind = .text, .fact = "sys.user", .icon = USER, .color = 146, .name = "User", .name_zh = "用户名" },
     .{ .id = "load", .group = "system", .source = .system, .kind = .number, .fact = "sys.load1", .fmt = "raw", .decimals = 2, .icon = GAUGE, .color = 180, .name = "Load average", .name_zh = "系统负载" },
     .{ .id = "mem-avail", .group = "system", .source = .system, .kind = .percent, .fact = "sys.mem_avail", .icon = CHIP, .color = 117, .name = "Memory available", .name_zh = "可用内存 %" },
+    .{ .id = "cpu", .group = "system", .source = .system, .kind = .percent, .fact = "sys.cpu", .rules = &[_][2]f64{ .{ 0, 78 }, .{ 60, 220 }, .{ 85, 203 } }, .icon = CPU, .color = 78, .name = "CPU usage", .name_zh = "CPU 占用" },
+    .{ .id = "mem-used", .group = "system", .source = .system, .kind = .bytes, .fact = "sys.mem_used", .total = "sys.mem_total", .icon = MEMORY, .color = 117, .name = "Memory used", .name_zh = "已用内存" },
+    .{ .id = "mem-used-pct", .group = "system", .source = .system, .kind = .percent, .fact = "sys.mem_used_pct", .rules = &[_][2]f64{ .{ 0, 78 }, .{ 75, 220 }, .{ 90, 203 } }, .icon = MEMORY, .color = 78, .name = "Memory used %", .name_zh = "内存占用 %" },
+    .{ .id = "swap-used", .group = "system", .source = .system, .kind = .bytes, .fact = "sys.swap_used", .icon = SWAP, .color = 180, .name = "Swap used", .name_zh = "已用交换区" },
+    .{ .id = "disk-free", .group = "system", .source = .system, .kind = .bytes, .fact = "sys.disk_free", .icon = HARDDISK, .color = 110, .name = "Disk free", .name_zh = "磁盘剩余" },
+    .{ .id = "disk-used-pct", .group = "system", .source = .system, .kind = .percent, .fact = "sys.disk_used_pct", .rules = &[_][2]f64{ .{ 0, 78 }, .{ 80, 220 }, .{ 92, 203 } }, .icon = HARDDISK, .color = 78, .name = "Disk used %", .name_zh = "磁盘占用 %" },
+    .{ .id = "fan", .group = "system", .source = .system, .kind = .number, .fact = "sys.fan", .fmt = "raw", .suffix = " rpm", .icon = FAN, .color = 117, .name = "Fan speed", .name_zh = "风扇转速" },
+    .{ .id = "uptime", .group = "system", .source = .system, .kind = .duration, .fact = "sys.uptime", .unit = .s, .fmt = "compact", .icon = UPTIME, .color = 244, .name = "Uptime", .name_zh = "开机时长" },
     .{ .id = "battery", .group = "system", .source = .system, .kind = .percent, .fact = "sys.battery", .rules = &[_][2]f64{ .{ 0, 203 }, .{ 20, 220 }, .{ 50, 78 } }, .icon = BATTERY, .color = 78, .name = "Battery", .name_zh = "电量" },
+
+    // disk usage: directory sizes are measured by a background process and cached,
+    // so a refresh never waits on a directory walk; the first refresh shows nothing
+    .{ .id = "dir-size", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.dir", .icon = FOLDER_SIZE, .color = 110, .name = "Directory size", .name_zh = "当前目录占用" },
+    .{ .id = "node-modules", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.node_modules", .icon = NODE, .color = 113, .name = "node_modules", .name_zh = "node_modules" },
+    .{ .id = "rust-target", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.rust_target", .icon = RUST, .color = 209, .name = "Rust target/", .name_zh = "Rust target 目录" },
+    .{ .id = "go-cache", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.go_cache", .icon = GO, .color = 81, .name = "Go caches", .name_zh = "Go 构建与模块缓存" },
+    .{ .id = "pods", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.pods", .icon = PACKAGE, .color = 208, .name = "CocoaPods Pods/", .name_zh = "iOS Pods 目录" },
+    .{ .id = "xcode-derived", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.xcode_derived", .icon = SWIFT, .color = 75, .name = "Xcode DerivedData", .name_zh = "Xcode DerivedData" },
+    .{ .id = "gradle-cache", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.gradle_cache", .icon = JAVA, .color = 114, .name = "Gradle caches (Android / Java)", .name_zh = "Gradle 缓存（Android / Java）" },
+    .{ .id = "maven-repo", .group = "disk", .source = .disk, .kind = .bytes, .fact = "size.maven_repo", .icon = JAVA, .color = 167, .name = "Maven repository", .name_zh = "Maven 本地仓库" },
 
     // custom
     .{ .id = "text", .group = "custom", .source = .custom, .kind = .text, .icon = "", .color = 252, .name = "Static text", .name_zh = "静态文字" },

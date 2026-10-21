@@ -5,6 +5,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const cfgm = @import("config.zig");
 const Facts = @import("facts.zig").Facts;
+const project = @import("project.zig");
+const sysinfo = @import("sysinfo.zig");
+const sizes = @import("sizes.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
@@ -22,6 +25,12 @@ pub const Needs = struct {
     git_stash: bool = false,
     git_last_commit: bool = false,
     git_tag: bool = false,
+    git_state: bool = false,
+    git_worktrees: bool = false,
+    sys: sysinfo.Needs = .{},
+    sizes: bool = false,
+    project: bool = false,
+    cloud: bool = false,
     load: bool = false,
     mem: bool = false,
     battery: bool = false,
@@ -45,6 +54,10 @@ pub const Needs = struct {
                         n.git_last_commit = true;
                     } else if (eq(id, "git-tag")) {
                         n.git_tag = true;
+                    } else if (eq(id, "git-state")) {
+                        n.git_state = true;
+                    } else if (eq(id, "git-worktrees")) {
+                        n.git_worktrees = true;
                     } else {
                         n.git_status = true;
                         if (eq(id, "git-untracked") or eq(id, "git-dirty")) n.git_untracked = true;
@@ -54,7 +67,16 @@ pub const Needs = struct {
                     if (eq(id, "load")) n.load = true;
                     if (eq(id, "mem-avail")) n.mem = true;
                     if (eq(id, "battery")) n.battery = true;
+                    if (eq(id, "cpu")) n.sys.cpu = true;
+                    if (eq(id, "mem-used") or eq(id, "mem-used-pct")) n.sys.mem = true;
+                    if (eq(id, "swap-used")) n.sys.swap = true;
+                    if (eq(id, "disk-free") or eq(id, "disk-used-pct")) n.sys.disk = true;
+                    if (eq(id, "fan")) n.sys.fan = true;
+                    if (eq(id, "uptime")) n.sys.uptime = true;
                 },
+                .project => n.project = true,
+                .cloud => n.cloud = true,
+                .disk => n.sizes = true,
                 else => {},
             }
         };
@@ -62,7 +84,7 @@ pub const Needs = struct {
     }
 
     fn anyGit(n: Needs) bool {
-        return n.git_status or n.git_diff or n.git_stash or n.git_last_commit or n.git_tag;
+        return n.git_status or n.git_diff or n.git_stash or n.git_last_commit or n.git_tag or n.git_state or n.git_worktrees;
     }
 };
 
@@ -78,7 +100,12 @@ pub fn collect(a: Allocator, cfg: cfgm.Config, input: Value, f: *Facts) void {
 
     const needs = Needs.of(cfg);
     if (needs.tx) if (f.str("transcript_path")) |p| transcript(a, f, p, now_ms, needs);
-    if (needs.anyGit()) if (f.str("workspace.current_dir") orelse f.str("cwd")) |dir| git(a, f, dir, needs);
+    if (needs.anyGit()) if (f.str("workspace.current_dir") orelse f.str("cwd")) |d| git(a, f, d, needs);
+    const dir = f.str("workspace.current_dir") orelse f.str("cwd");
+    if (needs.project) if (dir) |d| project.project(a, f, cfg, d);
+    if (needs.cloud) project.cloud(a, f, cfg, dir);
+    if (needs.sizes) if (dir) |d| sizes.sizes(a, f, cfg, d);
+    sysinfo.collectSys(a, f, needs.sys, dir);
     system(a, f, cfg, needs);
     custom(a, f, cfg);
     f.derive();
@@ -341,17 +368,29 @@ pub fn tmpDir(a: Allocator) []const u8 {
 }
 
 /// A tiny facts cache in $TMPDIR, one file per key, valid for `ttl_s` seconds.
-const Cache = struct {
+pub const Cache = struct {
     path: []const u8,
 
-    fn open(a: Allocator, kind: []const u8, key: []const u8) Cache {
+    pub fn open(a: Allocator, kind: []const u8, key: []const u8) Cache {
         const h = std.hash.Wyhash.hash(0, key);
         const name = std.fmt.allocPrint(a, "{s}-{x}", .{ kind, h }) catch "";
         return .{ .path = std.fs.path.join(a, &.{ tmpDir(a), name }) catch "" };
     }
 
+    /// Load cached facts into `f` whatever their age; returns the age in seconds.
+    pub fn loadAny(c: Cache, a: Allocator, f: *Facts) ?i64 {
+        const file = std.fs.openFileAbsolute(c.path, .{}) catch return null;
+        const st = file.stat() catch {
+            file.close();
+            return null;
+        };
+        file.close();
+        if (!c.load(a, f, std.math.maxInt(u32))) return null;
+        return @intCast(@divFloor(std.time.nanoTimestamp() - st.mtime, std.time.ns_per_s));
+    }
+
     /// Load cached facts into `f`; false when missing or older than `ttl_s`.
-    fn load(c: Cache, a: Allocator, f: *Facts, ttl_s: u32) bool {
+    pub fn load(c: Cache, a: Allocator, f: *Facts, ttl_s: u32) bool {
         if (ttl_s == 0) return false;
         const file = std.fs.openFileAbsolute(c.path, .{}) catch return false;
         defer file.close();
@@ -376,7 +415,7 @@ const Cache = struct {
         return true;
     }
 
-    fn store(c: Cache, a: Allocator, f: *const Facts, keys: []const []const u8) void {
+    pub fn store(c: Cache, a: Allocator, f: *const Facts, keys: []const []const u8) void {
         var out: std.ArrayList(u8) = .empty;
         for (keys) |k| {
             const v = f.get(k) orelse continue;
@@ -400,7 +439,7 @@ const Cache = struct {
 const git_keys = [_][]const u8{
     "git.branch",   "git.sha",   "git.dirty",    "git.staged",   "git.unstaged", "git.untracked",
     "git.ahead",    "git.behind", "git.diff_add", "git.diff_del", "git.stash",    "git.last_commit",
-    "git.tag",
+    "git.tag",      "git.conflicts", "git.upstream", "git.state",    "git.worktrees",
 };
 
 fn git(a: Allocator, f: *Facts, dir: []const u8, n: Needs) void {
@@ -415,6 +454,7 @@ fn git(a: Allocator, f: *Facts, dir: []const u8, n: Needs) void {
         var staged: usize = 0;
         var unstaged: usize = 0;
         var untracked: usize = 0;
+        var conflicts: usize = 0;
         var sha: ?[]const u8 = null;
         var head: ?[]const u8 = null;
         var it = std.mem.splitScalar(u8, out, '\n');
@@ -433,8 +473,11 @@ fn git(a: Allocator, f: *Facts, dir: []const u8, n: Needs) void {
             } else if (line.len > 3 and (line[0] == '1' or line[0] == '2') and line[1] == ' ') {
                 if (line[2] != '.') staged += 1;
                 if (line[3] != '.') unstaged += 1;
+            } else if (std.mem.startsWith(u8, line, "# branch.upstream ")) {
+                f.putStr("git.upstream", line[18..]);
             } else if (std.mem.startsWith(u8, line, "u ")) {
                 unstaged += 1;
+                conflicts += 1;
             } else if (std.mem.startsWith(u8, line, "? ")) {
                 untracked += 1;
             }
@@ -446,6 +489,7 @@ fn git(a: Allocator, f: *Facts, dir: []const u8, n: Needs) void {
         f.putNum("git.staged", @floatFromInt(staged));
         f.putNum("git.unstaged", @floatFromInt(unstaged));
         f.putNum("git.untracked", @floatFromInt(untracked));
+        f.putNum("git.conflicts", @floatFromInt(conflicts));
         f.put("git.dirty", .{ .flag = staged + unstaged + untracked > 0 });
     }
     if (n.git_diff) {
@@ -478,7 +522,36 @@ fn git(a: Allocator, f: *Facts, dir: []const u8, n: Needs) void {
             f.putStr("git.tag", std.mem.trim(u8, o, " \n"));
         }
     }
+    if (n.git_worktrees) {
+        if (run(a, &(base ++ [_][]const u8{ "worktree", "list", "--porcelain" }), dir, GIT_TIMEOUT_MS)) |o| {
+            var count: f64 = 0;
+            var it = std.mem.splitScalar(u8, o, '\n');
+            while (it.next()) |line| {
+                if (std.mem.startsWith(u8, line, "worktree ")) count += 1;
+            }
+            f.putNum("git.worktrees", count);
+        }
+    }
+    if (n.git_state) {
+        if (run(a, &(base ++ [_][]const u8{ "rev-parse", "--absolute-git-dir" }), dir, GIT_TIMEOUT_MS)) |o| {
+            if (gitState(a, std.mem.trim(u8, o, " \n"))) |st| f.putStr("git.state", st);
+        }
+    }
     cache.store(a, f, &git_keys);
+}
+
+/// An operation git left half-done, as git's own prompt (git-prompt.sh) names it.
+fn gitState(a: Allocator, gitdir: []const u8) ?[]const u8 {
+    const states = [_][2][]const u8{
+        .{ "rebase-merge", "REBASE" },        .{ "rebase-apply", "REBASE" }, .{ "MERGE_HEAD", "MERGING" },
+        .{ "CHERRY_PICK_HEAD", "CHERRY-PICKING" }, .{ "REVERT_HEAD", "REVERTING" }, .{ "BISECT_LOG", "BISECTING" },
+    };
+    for (states) |s| {
+        const p = std.fs.path.join(a, &.{ gitdir, s[0] }) catch continue;
+        std.fs.accessAbsolute(p, .{}) catch continue;
+        return s[1];
+    }
+    return null;
 }
 
 // ---------------------------------------------------------------------------

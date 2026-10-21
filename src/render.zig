@@ -252,6 +252,14 @@ fn valueText(a: Allocator, b: *std.ArrayList(u8), s: *const Seg, f: *const Facts
             }
             if (s.link and url != null) try w.put("\x1b]8;;\x1b\\");
         },
+        .bytes => {
+            const v = value orelse return false;
+            try bytes(w, v);
+            if (d.total.len > 0) if (f.num(d.total)) |t| {
+                try w.put("/");
+                try bytes(w, t);
+            };
+        },
         .flag, .bar => unreachable,
     }
     return true;
@@ -472,6 +480,18 @@ const Out = struct {
 };
 
 /// 90000 -> 90k, 1000000 -> 1M, 1500000 -> 1.5M
+/// Binary units like `du -h`: "512B", "9.8K", "340M", "1.2G".
+fn bytes(w: Out, n: f64) !void {
+    const units = [_][]const u8{ "B", "K", "M", "G", "T", "P" };
+    var v = n;
+    var i: usize = 0;
+    while (v >= 1024 and i + 1 < units.len) : (i += 1) v /= 1024;
+    if (v >= 10 or i == 0) return w.print("{d}{s}", .{ @as(i64, @intFromFloat(v + 0.5)), units[i] });
+    var buf: [32]u8 = undefined;
+    const t = try std.fmt.bufPrint(&buf, "{d:.1}", .{v});
+    try w.print("{s}{s}", .{ if (std.mem.endsWith(u8, t, ".0")) t[0 .. t.len - 2] else t, units[i] });
+}
+
 fn compact(w: Out, n: f64) !void {
     var v = n;
     var s: []const u8 = "";
@@ -742,4 +762,14 @@ test "durations and clock" {
 
 test "display width skips escapes" {
     try testing.expectEqual(@as(usize, 5), displayWidth("\x1b[38;5;1mab\x1b[0m中c\x1b]8;;http://x\x1b\\"));
+}
+
+test "bytes in binary units" {
+    const a = testing.allocator;
+    inline for (.{ .{ 512, "512B" }, .{ 10035, "9.8K" }, .{ 356515840, "340M" }, .{ 1288490188.8, "1.2G" }, .{ 1073741824, "1G" } }) |c| {
+        var b: std.ArrayList(u8) = .empty;
+        defer b.deinit(a);
+        try bytes(.{ .a = a, .b = &b }, c[0]);
+        try testing.expectEqualStrings(c[1], b.items);
+    }
 }

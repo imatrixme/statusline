@@ -8,6 +8,7 @@
 //!   omnitt-statusline doctor          render the last input and report timings and gaps
 //!   omnitt-statusline uninstall       restore settings.json / Codex config.toml and remove this tool
 //!   omnitt-statusline registry        print the segment catalogue as JSON
+//!   omnitt-statusline __size ...      internal: background directory-size worker (see sizes.zig)
 //!
 //! The renderer never touches the network and never updates itself.
 
@@ -16,6 +17,7 @@ const cfgm = @import("config.zig");
 const registry = @import("registry.zig");
 const render = @import("render.zig");
 const collect = @import("collect.zig");
+const sizes = @import("sizes.zig");
 const settings = @import("settings.zig");
 const codex = @import("codex.zig");
 const Facts = @import("facts.zig").Facts;
@@ -36,6 +38,8 @@ pub fn main() !void {
     const cmd = args[1];
     const arg = if (args.len > 2) args[2] else null;
 
+    // a long walk: not the arena, which would keep every outgrown hash map buffer
+    if (eq(cmd, "__size")) return exit(sizes.worker(std.heap.smp_allocator, args[2..]));
     if (eq(cmd, "setup")) return exit(setup(arg));
     if (eq(cmd, "decode")) return exit(decode(arg orelse return usage()));
     if (eq(cmd, "edit")) return exit(edit());
@@ -147,6 +151,17 @@ fn columns() usize {
     return std.fmt.parseInt(usize, c, 10) catch 0;
 }
 
+/// Columns Claude Code leaves for the status line. COLUMNS is the whole terminal,
+/// but the line is drawn with `2 + padding` columns of margin on both sides and
+/// anything wider is cut with "…" (measured on Claude Code 2.1.280).
+const CLAUDE_MARGIN = 2;
+
+fn usable(cfg: cfgm.Config) usize {
+    const c = columns();
+    const reserve = 2 * (CLAUDE_MARGIN + cfg.padding);
+    return if (c > reserve) c - reserve else 0;
+}
+
 // ---------------------------------------------------------------------------
 // render
 
@@ -166,7 +181,7 @@ fn renderInput(raw: []const u8) ![]u8 {
     const input = std.json.parseFromSliceLeaky(std.json.Value, A, raw, .{}) catch std.json.Value{ .null = {} };
     var facts = Facts.init(A);
     collect.collect(A, cfg, input, &facts);
-    return render.render(A, cfg, &facts, columns());
+    return render.render(A, cfg, &facts, usable(cfg));
 }
 
 // ---------------------------------------------------------------------------
@@ -490,4 +505,7 @@ test {
     _ = @import("settings.zig");
     _ = @import("collect.zig");
     _ = @import("codex.zig");
+    _ = @import("project.zig");
+    _ = @import("sysinfo.zig");
+    _ = @import("sizes.zig");
 }
